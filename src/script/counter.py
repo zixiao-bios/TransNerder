@@ -59,11 +59,13 @@ def main():
     print(len(en_counter))
     print(en_counter.most_common(100))
     
-    with open('zh_counter.pkl', 'wb') as f:
-        pickle.dump(zh_counter, f)
-        
-    with open('en_counter.pkl', 'wb') as f:
-        pickle.dump(en_counter, f)
+    data_dict = {
+        'zh_counter': zh_counter,
+        'en_counter': en_counter,
+        'line_num': line_num
+    }
+    with open('data.pkl', 'wb') as f:
+        pickle.dump(data_dict, f)
 
 
 if __name__ == '__main__':

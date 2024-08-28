@@ -13,15 +13,18 @@ def en_to_token(en: str):
 
 
 class WMT_DatasetChunk:
-    def __init__(self, csv_path, batch_size=100000, shuffle=False):
+    def __init__(self, csv_path, batch_size=100000, shuffle=False, tot_lines=None):
         self.csv_path = csv_path
         self.batch_size = batch_size
         self.shuffle = shuffle
         if self.shuffle:
             raise NotImplementedError('Shuffle is not implemented yet.')
         
-        result = subprocess.run(['wc', '-l', csv_path], stdout=subprocess.PIPE)
-        self.tot_lines = int(result.stdout.decode().split()[0]) - 1
+        if tot_lines is not None:
+            self.tot_lines = tot_lines
+        else:
+            result = subprocess.run(['wc', '-l', csv_path], stdout=subprocess.PIPE)
+            self.tot_lines = int(result.stdout.decode().split()[0]) - 1
         
         self.data_reader = pd.read_csv(csv_path, chunksize=batch_size)
     
@@ -38,10 +41,8 @@ class WMT_DatasetChunk:
 
 class WMT_DatasetVocab(WMT_DatasetChunk):
     def __init__(self, csv_path, **kwargs):
-        super().__init__(csv_path, **kwargs)
-        
-        with open('zh_counter.pkl', 'rb') as f:
-            self.zh_counter: Counter = pickle.load(f)
-
-        with open('en_counter.pkl', 'rb') as f:
-            self.en_counter: Counter = pickle.load(f)
+        with open('data.pkl', 'rb') as f:
+            data_dict = pickle.load(f)
+            self.zh_counter: Counter = data_dict['zh_counter']
+            self.en_counter: Counter = data_dict['en_counter']
+            super().__init__(csv_path, tot_lines=data_dict['line_num'], **kwargs)
