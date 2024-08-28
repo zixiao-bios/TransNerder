@@ -1,76 +1,47 @@
-import pandas as pd
-from dotenv import load_dotenv
-import os
+import pickle
 from collections import Counter
+import pandas as pd
+import subprocess
 import re
-from tqdm import tqdm
-import html
-from multiprocessing import Pool
 
 
-def process_chunk(chunk):
-    zh_counter = Counter()
-    en_counter = Counter()
-    
-    zh = ' '.join(chunk.iloc[:, 0].astype(str).tolist())
-    en = ' '.join(chunk.iloc[:, 1].astype(str).tolist())
-    
-    zh = re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]|[，。！？、；：“”（）《》〈〉—…‘’“”""\'\-—_/\[\]{}<>`~@#$%^&*+=|\\]', zh)
-    zh_counter.update(zh)
-    
-    en = html.unescape(en)
-    en = re.findall(r"[a-zA-Z]+(?:'[a-zA-Z]+)?|[0-9]+|[.,!?;:\"\'\-(){}[\]<>`~#$%^&*+=|\\/_]", en)
-    en_counter.update(en)
-    
-    return zh_counter, en_counter, chunk.shape[0]
+def zh_to_token(zh: str):
+    return re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]|[，。！？、；：“”（）《》〈〉—…‘’“”""\'\-—_/\[\]{}<>`~@#$%^&*+=|\\]', zh)
+
+def en_to_token(en: str):
+    return re.findall(r"[a-zA-Z]+(?:'[a-zA-Z]+)?|[0-9]+|[.,!?;:\"\'\-(){}[\]<>`~#$%^&*+=|\\/_]", en)
 
 
-def main():
-    load_dotenv()
-
-    total_lines = 2.5e7
-    chunk_size = 100000
-    data = pd.read_csv(os.getenv('CSV_PATH', ''), chunksize=chunk_size)
-
-    line_num = 0
-    zh_counter = Counter()
-    en_counter = Counter()
-    
-    max_workers = 4
-
-    with Pool(processes=max_workers) as pool:
-        jobs = []
+class WMT_DatasetChunk:
+    def __init__(self, csv_path, batch_size=100000, shuffle=False):
+        self.csv_path = csv_path
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        if self.shuffle:
+            raise NotImplementedError('Shuffle is not implemented yet.')
         
-        with tqdm(total=total_lines) as pbar:
-            
-            def update_res(res):
-                zh, en, num = res
-                zh_counter.update(zh)
-                en_counter.update(en)
-                nonlocal line_num
-                line_num += num
-                pbar.update(num)
-                
-            for chunk in data:
-                if len(jobs) > max_workers * 2:
-                    for job in jobs:
-                        if job.ready():
-                            update_res(job.get())
-                            jobs.remove(job)
-                    
-                jobs.append(pool.apply_async(process_chunk, (chunk,)))
-                
-            for job in jobs:
-                update_res(job.get())
-
-    print(f'line_num: {line_num}')
-    print('================== zh ==================')
-    print(len(zh_counter))
-    print(zh_counter.most_common(100))
-    print('================== en ==================')
-    print(len(en_counter))
-    print(en_counter.most_common(100))
+        result = subprocess.run(['wc', '-l', csv_path], stdout=subprocess.PIPE)
+        self.tot_lines = int(result.stdout.decode().split()[0]) - 1
+        
+        self.data_reader = pd.read_csv(csv_path, chunksize=batch_size)
+    
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        chunk = next(self.data_reader)
+        zh_lines = chunk.iloc[:, 0].astype(str).tolist()
+        en_lines = chunk.iloc[:, 1].astype(str).tolist()
+        assert len(zh_lines) == len(en_lines), 'Length of zh and en should be the same.'
+        return (zh_lines, en_lines)
 
 
-if __name__ == '__main__':
-    main()
+class WMT_DatasetVocab(WMT_DatasetChunk):
+    def __init__(self, csv_path, **kwargs):
+        super().__init__(csv_path, **kwargs)
+        
+        with open('zh_counter.pkl', 'rb') as f:
+            self.zh_counter: Counter = pickle.load(f)
+
+        with open('en_counter.pkl', 'rb') as f:
+            self.en_counter: Counter = pickle.load(f)
