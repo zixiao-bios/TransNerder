@@ -20,6 +20,8 @@ lr = 0.002
 
 
 def main():
+    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr
+    
     if torch.cuda.is_available():
         cuda = "cuda:2"
         device = torch.device(cuda)
@@ -74,9 +76,9 @@ def main():
             
             run_loss += loss.mean().item()
 
-            if step % 100 == 0:
+            if step % 200 == 0:
                 if last_time is not None:
-                    token_num = 100 * batch_size * (zh_seq_len + en_seq_len)
+                    token_num = 200 * batch_size * (zh_seq_len + en_seq_len)
                     writer.add_scalar(f'tokens / sec [epoch{epoch}]', token_num / (time.time() - last_time), step)
                 last_time = time.time()
                 
@@ -85,12 +87,19 @@ def main():
                 
                 writer.add_scalar(f'loss [epoch{epoch}]', loss.mean().item(), step)
                 writer.add_text(f'encoder_input [epoch{epoch}]', dataset.en_vocab.idx_to_str(en_input[0].tolist()), step)
-                writer.add_text(f'decoder_input [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_input[0].tolist()), step)
+                # writer.add_text(f'decoder_input [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_input[0].tolist()), step)
                 writer.add_text(f'target [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_target[0].tolist()), step)
                 writer.add_text(f'predict [epoch{epoch}]', dataset.zh_vocab.idx_to_str(Y_idx[0].tolist()), step)
                 writer.flush()
 
             step += 1
+        
+        torch.save(net.state_dict(), f'checkpoints/{run_name}_epoch{epoch}.pth')
+        print(f'Model saved at epoch {epoch}')
+        writer.add_scalar(f'epoch loss', run_loss / step, epoch)
+        
+        lr = lr * 0.7
+
 
 if __name__ == '__main__':
     main()
