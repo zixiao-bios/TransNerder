@@ -73,7 +73,8 @@ def main():
 
             if step % 100 == 0:
                 if last_time is not None:
-                    writer.add_scalar('step / sec', 100 / (time.time() - last_time), step)
+                    token_num = 100 * batch_size * (zh_seq_len + en_seq_len)
+                    writer.add_scalar('tokens / sec', token_num / (time.time() - last_time), step)
                 last_time = time.time()
                 
                 Y_idx = Y.argmax(dim=2)
