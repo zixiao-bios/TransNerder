@@ -9,21 +9,24 @@ from gru import Seq2SeqGRU
 from dataset import WMT_Dataset_en2zh
 from loss import MaskedSoftmaxCELoss
 
-run_name = 'test03'
+run_name = 'test_mac'
 
 en_seq_len = 30
 zh_seq_len = 45
 
 epochs = 10
 batch_size = 12
-lr = 0.005
+lr = 0.002
 
 
 def main():
     if torch.cuda.is_available():
-        device = torch.device("cuda:3")
-    if torch.backends.mps.is_available():
+        cuda = "cuda:2"
+        device = torch.device(cuda)
+        print(f'Use device: {cuda}')
+    elif torch.backends.mps.is_available():
         device = torch.device("mps")
+        print(f'Use device: mps')
     else:
         print("GPU or MPS not found, exit.")
         exit()
