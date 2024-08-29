@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+import time
 import torch
 import torch.optim as optim
 from tensorboardX import SummaryWriter
@@ -8,14 +9,14 @@ from gru import Seq2SeqGRU
 from dataset import WMT_Dataset_en2zh
 from loss import MaskedSoftmaxCELoss
 
-run_name = 'test01'
+run_name = 'test03'
 
 en_seq_len = 30
 zh_seq_len = 45
 
 epochs = 10
 batch_size = 12
-lr = 0.01
+lr = 0.005
 
 
 def main():
@@ -49,6 +50,7 @@ def main():
     for epoch in range(epochs):
         run_loss = 0.0
         step = 0
+        last_time = None
         
         for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens, zh_tokens, en_tokens in dataset:
             zh_input = zh_input.to(device)
@@ -62,22 +64,27 @@ def main():
             # Y.shape = (batch_size, seq_len, target_vocab_size)
             
             loss = loss_fn(Y, zh_target, zh_valid_lens)
-            loss.backward()
+            loss.sum().backward()
             optimizer.step()
             
-            run_loss += loss.item()
-            step += 1
+            run_loss += loss.mean().item()
 
             if step % 100 == 0:
+                if last_time is not None:
+                    writer.add_scalar('step / sec', 100 / (time.time() - last_time), step)
+                last_time = time.time()
+                
                 Y_idx = Y.argmax(dim=2)
                 # Y_idx.shape = (batch_size, seq_len)
                 
-                writer.add_scalar('loss', loss.item(), step)
+                writer.add_scalar('loss', loss.mean().item(), step)
                 writer.add_text('encoder_input', dataset.en_vocab.idx_to_str(en_input[0].tolist()), step)
                 writer.add_text('decoder_input', dataset.zh_vocab.idx_to_str(zh_input[0].tolist()), step)
                 writer.add_text('target', dataset.zh_vocab.idx_to_str(zh_target[0].tolist()), step)
                 writer.add_text('predict', dataset.zh_vocab.idx_to_str(Y_idx[0].tolist()), step)
                 writer.flush()
+
+            step += 1
 
 if __name__ == '__main__':
     main()

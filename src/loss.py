@@ -19,5 +19,5 @@ class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
         # mask.shape = (batch_size, seq_len)
         
         loss = super(MaskedSoftmaxCELoss, self).forward(pred.permute(0, 2, 1), label)
-        loss = torch.sum(loss * mask) / mask.sum()
+        loss = (loss * mask).mean(dim=1)
         return loss
