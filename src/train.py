@@ -1,26 +1,15 @@
-import os
-from dotenv import load_dotenv
 import time
 import torch
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 
 from gru import Seq2SeqGRU
-from dataset import WMT_Dataset_en2zh
 from loss import MaskedSoftmaxCELoss
-
-run_name = 'test_mac'
-
-en_seq_len = 30
-zh_seq_len = 45
-
-epochs = 10
-batch_size = 12
-lr = 0.002
+from config import run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, dataset, params
 
 
 def main():
-    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr
+    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, dataset, params
     
     if torch.cuda.is_available():
         cuda = "cuda:2"
@@ -33,20 +22,7 @@ def main():
         print("GPU or MPS not found, exit.")
         exit()
         
-    load_dotenv()
-
     writer = SummaryWriter(f'runs/{run_name}')
-    dataset = WMT_Dataset_en2zh(os.getenv('CSV_PATH', ''), zh_target_len=zh_seq_len, en_target_len=en_seq_len, batch_size=batch_size)
-    params = {
-        'source_vocab_size': len(dataset.en_vocab), 
-        'target_vocab_size': len(dataset.zh_vocab), 
-        'source_embed_size': 300, 
-        'target_embed_size': 200, 
-        'source_seq_len': en_seq_len, 
-        'target_seq_len': zh_seq_len, 
-        'num_hiddens': 256, 
-        'num_layers': 2
-    }
 
     net = Seq2SeqGRU(**params).to(device)
     loss_fn = MaskedSoftmaxCELoss().to(device)
@@ -94,9 +70,12 @@ def main():
 
             step += 1
         
-        torch.save(net.state_dict(), f'checkpoints/{run_name}_epoch{epoch}.pth')
+        torch.save(net.state_dict(), f'runs/{run_name}/epoch{epoch}.pth')
         print(f'Model saved at epoch {epoch}')
+        
         writer.add_scalar(f'epoch loss', run_loss / step, epoch)
+        writer.add_scalar(f'epoch lr', lr, epoch)
+        writer.flush()
         
         lr = lr * 0.7
 
