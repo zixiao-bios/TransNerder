@@ -20,10 +20,12 @@ lr = 0.005
 
 
 def main():
+    if torch.cuda.is_available():
+        device = torch.device("cuda:3")
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
-        print("MPS device not found.")
+        print("GPU or MPS not found, exit.")
         exit()
         
     load_dotenv()
