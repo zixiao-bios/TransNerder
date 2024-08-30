@@ -5,11 +5,12 @@ from tensorboardX import SummaryWriter
 
 from gru import Seq2SeqGRU
 from loss import MaskedSoftmaxCELoss
-from config import run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, dataset, params
+from config import run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, net_params, data_params
+from dataset import WMT_Dataset_en2zh
 
 
 def main():
-    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, dataset, params
+    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, net_params, data_params
     
     if torch.cuda.is_available():
         cuda = "cuda:2"
@@ -24,7 +25,8 @@ def main():
         
     writer = SummaryWriter(f'runs/{run_name}')
 
-    net = Seq2SeqGRU(**params).to(device)
+    dataset = WMT_Dataset_en2zh(**data_params)
+    net = Seq2SeqGRU(**net_params).to(device)
     loss_fn = MaskedSoftmaxCELoss().to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr) # type: ignore
 
@@ -35,12 +37,11 @@ def main():
         step = 0
         last_time = None
         
-        for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens, zh_tokens, en_tokens in dataset:
+        for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens in dataset:
             zh_input = zh_input.to(device)
             en_input = en_input.to(device)
             zh_target = zh_target.to(device)
             zh_valid_lens = zh_valid_lens.to(device)
-            en_valid_lens = en_valid_lens.to(device)
             
             optimizer.zero_grad()
             Y = net(en_input, zh_input)

@@ -1,10 +1,11 @@
 import pickle
 from collections import Counter
 import pandas as pd
-import subprocess
 import re
 import html
+from typing import Callable
 import torch
+import multiprocessing
 
 
 def zh_to_token(zh: str):
@@ -21,6 +22,42 @@ def make_vocab(counter: Counter, min_freq=400):
     
     token_to_idx = {token: idx for idx, token in enumerate(idx_to_token)}
     return idx_to_token, token_to_idx
+
+def process_lines(lines: list[str], tokenizer: list[Callable], vocab: 'Vocab', target_len: int, add_sos=False, add_eos=True):
+    """传入若干行文本，返回处理后的tokens和valid_len，支持手动设置是否添加sos和eos
+
+    Args:
+        line (str): 输入的一行文本
+        tokenizer (Callable): 函数列表，将文本转换为tokens的一系列函数，按顺序调用
+        vocab (Vocab): 文本的词典对象
+        target_len (int): 目标长度，用于截取和填充
+        add_sos (bool, optional): _description_. Defaults to False.
+        add_eos (bool, optional): _description_. Defaults to False.
+
+    Returns:
+        tuple[list[list[str]], list[int]]: tokens, valid_len. tokens是处理后的tokens列表，valid_len是有效长度（不包含pad, sos, eos的长度）
+    """
+    tokens_list: list[list[str]] = []
+    valid_lens: list[int] = [] 
+    for line in lines:
+        for f in tokenizer:
+            line = f(line)
+        assert type(line) == list, f'type(line) = {type(line)}'
+        tokens, valid_len = vocab.trim_tokens(line, target_len, add_sos=add_sos, add_eos=add_eos)
+        tokens_list.append(tokens)
+        valid_lens.append(valid_len)
+    return tokens_list, valid_lens
+
+def process_target_lines(lines: list[str], tokenizer: list[Callable], vocab: 'Vocab', target_len: int):
+    tokens_list, valid_lens = process_lines(lines, tokenizer, vocab, target_len + 1, True, True)
+    input = [vocab.tokens_to_idx(tokens[:-1]) for tokens in tokens_list]
+    target = [vocab.tokens_to_idx(tokens[1:]) for tokens in tokens_list]
+    return input, target, valid_lens
+
+def process_source_lines(lines: list[str], tokenizer: list[Callable], vocab: 'Vocab', target_len: int):
+    tokens_list, valid_lens = process_lines(lines, tokenizer, vocab, target_len, False, True)
+    input = [vocab.tokens_to_idx(tokens) for tokens in tokens_list]
+    return input, valid_lens
 
 class Vocab:
     def __init__(self, counter: Counter, min_freq=400):
@@ -53,7 +90,7 @@ class Vocab:
         if len(tokens) > trim_len:
             tokens = tokens[:trim_len]
             
-        valid_len = len(tokens)
+        valid_len = len(tokens) - int(add_sos)
         
         if add_eos:
             tokens.append('[eos]')
@@ -68,72 +105,88 @@ class Vocab:
         tokens, valid_len = self.trim_tokens(tokens, target_len, add_sos, add_eos)
         return self.tokens_to_idx(tokens), valid_len
 
-class WMT_DatasetChunk:
-    def __init__(self, csv_path, batch_size=100000, shuffle=False, tot_lines=None):
-        self.csv_path = csv_path
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        if self.shuffle:
-            raise NotImplementedError('Shuffle is not implemented yet.')
+class WMTChunk:
+    def __init__(self, data_reader):
+        self.data_reader = data_reader
         
-        if tot_lines is not None:
-            self.tot_lines = tot_lines
-        else:
-            result = subprocess.run(['wc', '-l', csv_path], stdout=subprocess.PIPE)
-            self.tot_lines = int(result.stdout.decode().split()[0]) - 1
-        
-        self.data_reader = pd.read_csv(csv_path, chunksize=batch_size)
-    
     def __iter__(self):
         return self
     
     def __next__(self):
         chunk = next(self.data_reader)
+        
         zh_lines = chunk.iloc[:, 0].astype(str).tolist()
         en_lines = chunk.iloc[:, 1].astype(str).tolist()
         assert len(zh_lines) == len(en_lines), 'Length of zh and en should be the same.'
         return (zh_lines, en_lines)
 
+def _process_chunk(csv_path, start_row, num_rows, batch_size, zh_target_len, en_target_len, zh_vocab, en_vocab, queue: multiprocessing.Queue):
+    data_reader = pd.read_csv(csv_path, skiprows=start_row, nrows=num_rows, chunksize=batch_size)
+    chunk = WMTChunk(data_reader)
+    
+    for zh_lines, en_lines in chunk:
+        zh_input, zh_target, zh_valid_lens = process_target_lines(zh_lines, [zh_to_token], zh_vocab, zh_target_len)
+        en_input, en_valid_lens = process_source_lines(en_lines, [html.unescape, en_to_token], en_vocab, en_target_len)
+        queue.put((torch.tensor(zh_input), torch.tensor(en_input), torch.tensor(zh_target), torch.tensor(zh_valid_lens).reshape(-1, 1), torch.tensor(en_valid_lens).reshape(-1, 1)))
 
-class WMT_Dataset_en2zh(WMT_DatasetChunk):
-    def __init__(self, csv_path, zh_target_len, en_target_len, **kwargs):
-        with open('data.pkl', 'rb') as f:
-            data_dict = pickle.load(f)
-            self.zh_counter: Counter = data_dict['zh_counter']
-            self.en_counter: Counter = data_dict['en_counter']
-            super().__init__(csv_path, tot_lines=data_dict['line_num'], **kwargs)
+    queue.put(None)
+
+class WMT_Dataset_en2zh():
+    def __init__(self, csv_path, tot_lines, zh_vocab, en_vocab, zh_target_len, en_target_len, batch_size, num_process=8):
+        print('Dataset init...')
+        
+        self.csv_path = csv_path
+        self.tot_lines = tot_lines
+        self.num_process = num_process
+        self.batch_size = batch_size
         
         self.zh_target_len = zh_target_len
         self.en_target_len = en_target_len
         
-        self.zh_vocab = Vocab(self.zh_counter)
-        self.en_vocab = Vocab(self.en_counter)
+        self.zh_vocab = zh_vocab
+        self.en_vocab = en_vocab
+        
+        self.processes = []
+    
+    def reset_porcesses(self):
+        for p in self.processes:
+            p.terminate()
+            p.join()
+        
+        self.processes = []
+        self.finished_process = 0
+        self.res_queue = multiprocessing.Queue(maxsize=2*self.num_process)
+
+        lines_pre_process = round(self.tot_lines / self.num_process)
+        for i in range(self.num_process):
+            start_row = i * lines_pre_process
+            if i == self.num_process - 1:
+                num_rows = self.tot_lines - start_row
+            else:
+                num_rows = lines_pre_process
+            
+            p = multiprocessing.Process(target=_process_chunk, args=(self.csv_path, start_row, num_rows, self.batch_size, self.zh_target_len, self.en_target_len, self.zh_vocab, self.en_vocab, self.res_queue))
+            self.processes.append(p)
+    
+    def start(self):
+        for p in self.processes:
+            p.start()
+    
+    def __iter__(self):
+        self.reset_porcesses()
+        self.start()
+        return self
     
     def __next__(self): # type: ignore
-        zh_lines, en_lines = super().__next__()
-        
-        zh_tokens = []
-        zh_tokens_no_sos = []
-        zh_valid_lens = []
-        for line in zh_lines:
-            tokens = zh_to_token(line)
-            tokens_sos, _ = self.zh_vocab.trim_tokens(tokens, self.zh_target_len, add_sos=True, add_eos=True)
-            zh_tokens.append(tokens_sos)
+        res = self.res_queue.get()
+        if res is None:
+            self.finished_process += 1
+            if self.finished_process == self.num_process:
+                raise StopIteration
             
-            tokens_no_sos, valid_len = self.zh_vocab.trim_tokens(tokens, self.zh_target_len, add_sos=False, add_eos=True)
-            zh_tokens_no_sos.append(tokens_no_sos)
-            zh_valid_lens.append(valid_len)
-        
-        en_tokens = []
-        en_valid_lens = []
-        for line in en_lines:
-            tokens = en_to_token(html.unescape(line))
-            tokens, valid_len = self.en_vocab.trim_tokens(tokens, self.en_target_len, add_sos=False, add_eos=True)
-            en_tokens.append(tokens)
-            en_valid_lens.append(valid_len)
-        
-        zh_input = [self.zh_vocab.tokens_to_idx(tokens) for tokens in zh_tokens]
-        zh_target = [self.zh_vocab.tokens_to_idx(tokens) for tokens in zh_tokens_no_sos]
-        en_input = [self.en_vocab.tokens_to_idx(tokens) for tokens in en_tokens]
+            return self.__next__()
+        return res
 
-        return (torch.tensor(zh_input), torch.tensor(en_input), torch.tensor(zh_target), torch.tensor(zh_valid_lens).reshape(-1, 1), torch.tensor(en_valid_lens).reshape(-1, 1), zh_tokens, en_tokens)
+    def join(self):
+        for p in self.processes:
+            p.join()
