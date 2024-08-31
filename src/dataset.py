@@ -7,6 +7,7 @@ from typing import Callable
 import torch
 import multiprocessing
 import logging
+import numpy as np
 
 from log import log_queue, init_subprocess_logging
 
@@ -135,7 +136,7 @@ def _process_chunk(csv_path, start_row, num_rows, batch_size, zh_target_len, en_
         for zh_lines, en_lines in chunk:
             zh_input, zh_target, zh_valid_lens = process_target_lines(zh_lines, [zh_to_token], zh_vocab, zh_target_len)
             en_input, en_valid_lens = process_source_lines(en_lines, [html.unescape, en_to_token], en_vocab, en_target_len)
-            queue.put((torch.tensor(zh_input), torch.tensor(en_input), torch.tensor(zh_target), torch.tensor(zh_valid_lens).reshape(-1, 1), torch.tensor(en_valid_lens).reshape(-1, 1)))
+            queue.put([np.array(zh_input), np.array(en_input), np.array(zh_target), np.array(zh_valid_lens).reshape(-1, 1), np.array(en_valid_lens).reshape(-1, 1)])
 
         queue.put(None)
         logger.info(f'Finished process chunk: start_row={start_row}, num_rows={num_rows}')
@@ -197,7 +198,11 @@ class WMT_Dataset_en2zh():
                 raise StopIteration
             
             return self.__next__()
-        return res
+        
+        torch_res = []
+        for each in res:
+            torch_res.append(torch.from_numpy(each))
+        return torch_res
 
     def join(self):
         for p in self.processes:
