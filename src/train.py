@@ -1,16 +1,19 @@
 import time
+import logging
 import torch
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 
 from gru import Seq2SeqGRU
 from loss import MaskedSoftmaxCELoss
-from config import run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, net_params, data_params
+from config import run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr
 from dataset import WMT_Dataset_en2zh
+from init_params import get_params
+from log import init_main_logging, log_queue
 
 
 def main():
-    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, net_params, data_params
+    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr
     
     if torch.cuda.is_available():
         cuda = "cuda:2"
@@ -22,9 +25,13 @@ def main():
     else:
         print("GPU or MPS not found, exit.")
         exit()
-        
+    
+    init_main_logging(log_queue)
+    logger = logging.getLogger('main')
+    
     writer = SummaryWriter(f'runs/{run_name}')
 
+    data_params, net_params = get_params()
     dataset = WMT_Dataset_en2zh(**data_params)
     net = Seq2SeqGRU(**net_params).to(device)
     loss_fn = MaskedSoftmaxCELoss().to(device)
@@ -36,6 +43,7 @@ def main():
         run_loss = 0.0
         step = 0
         last_time = None
+        logger.info(f'Epoch {epoch} start')
         
         for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens in dataset:
             zh_input = zh_input.to(device)
@@ -71,8 +79,10 @@ def main():
 
             step += 1
         
+        logger.info(f'Epoch {epoch} finished, loss: {run_loss / step}')
+        
         torch.save(net.state_dict(), f'runs/{run_name}/epoch{epoch}.pth')
-        print(f'Model saved at epoch {epoch}')
+        logger.info(f'Epoch {epoch} model saved')
         
         writer.add_scalar(f'epoch loss', run_loss / step, epoch)
         writer.add_scalar(f'epoch lr', lr, epoch)

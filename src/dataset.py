@@ -6,6 +6,9 @@ import html
 from typing import Callable
 import torch
 import multiprocessing
+import logging
+
+from log import log_queue, init_subprocess_logging
 
 
 def zh_to_token(zh: str):
@@ -120,16 +123,25 @@ class WMTChunk:
         assert len(zh_lines) == len(en_lines), 'Length of zh and en should be the same.'
         return (zh_lines, en_lines)
 
-def _process_chunk(csv_path, start_row, num_rows, batch_size, zh_target_len, en_target_len, zh_vocab, en_vocab, queue: multiprocessing.Queue):
-    data_reader = pd.read_csv(csv_path, skiprows=start_row, nrows=num_rows, chunksize=batch_size)
-    chunk = WMTChunk(data_reader)
+def _process_chunk(csv_path, start_row, num_rows, batch_size, zh_target_len, en_target_len, zh_vocab, en_vocab, queue: multiprocessing.Queue, log_queue: multiprocessing.Queue):
+    init_subprocess_logging(log_queue)
+    logger = logging.getLogger('dataset_subprocess')
     
-    for zh_lines, en_lines in chunk:
-        zh_input, zh_target, zh_valid_lens = process_target_lines(zh_lines, [zh_to_token], zh_vocab, zh_target_len)
-        en_input, en_valid_lens = process_source_lines(en_lines, [html.unescape, en_to_token], en_vocab, en_target_len)
-        queue.put((torch.tensor(zh_input), torch.tensor(en_input), torch.tensor(zh_target), torch.tensor(zh_valid_lens).reshape(-1, 1), torch.tensor(en_valid_lens).reshape(-1, 1)))
+    try:
+        logger.info(f'Process chunk: start_row={start_row}, num_rows={num_rows}')
+        data_reader = pd.read_csv(csv_path, skiprows=start_row, nrows=num_rows, chunksize=batch_size)
+        chunk = WMTChunk(data_reader)
+        
+        for zh_lines, en_lines in chunk:
+            zh_input, zh_target, zh_valid_lens = process_target_lines(zh_lines, [zh_to_token], zh_vocab, zh_target_len)
+            en_input, en_valid_lens = process_source_lines(en_lines, [html.unescape, en_to_token], en_vocab, en_target_len)
+            queue.put((torch.tensor(zh_input), torch.tensor(en_input), torch.tensor(zh_target), torch.tensor(zh_valid_lens).reshape(-1, 1), torch.tensor(en_valid_lens).reshape(-1, 1)))
 
-    queue.put(None)
+        queue.put(None)
+        logger.info(f'Finished process chunk: start_row={start_row}, num_rows={num_rows}')
+    except Exception as e:
+        logger.error(e)
+        queue.put(None)
 
 class WMT_Dataset_en2zh():
     def __init__(self, csv_path, tot_lines, zh_vocab, en_vocab, zh_target_len, en_target_len, batch_size, num_process=8):
@@ -165,7 +177,7 @@ class WMT_Dataset_en2zh():
             else:
                 num_rows = lines_pre_process
             
-            p = multiprocessing.Process(target=_process_chunk, args=(self.csv_path, start_row, num_rows, self.batch_size, self.zh_target_len, self.en_target_len, self.zh_vocab, self.en_vocab, self.res_queue))
+            p = multiprocessing.Process(target=_process_chunk, args=(self.csv_path, start_row, num_rows, self.batch_size, self.zh_target_len, self.en_target_len, self.zh_vocab, self.en_vocab, self.res_queue, log_queue))
             self.processes.append(p)
     
     def start(self):
