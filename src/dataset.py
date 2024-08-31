@@ -202,3 +202,7 @@ class WMT_Dataset_en2zh():
     def join(self):
         for p in self.processes:
             p.join()
+    
+    def terminate(self):
+        for p in self.processes:
+            p.terminate()

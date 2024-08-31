@@ -39,56 +39,63 @@ def main():
 
     net.train()
 
-    for epoch in range(epochs):
-        run_loss = 0.0
-        step = 0
-        last_time = None
-        logger.info(f'Epoch {epoch} start')
-        
-        for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens in dataset:
-            zh_input = zh_input.to(device)
-            en_input = en_input.to(device)
-            zh_target = zh_target.to(device)
-            zh_valid_lens = zh_valid_lens.to(device)
+    try:
+        for epoch in range(epochs):
+            run_loss = 0.0
+            step = 0
+            last_time = None
+            logger.info(f'Epoch {epoch} start')
             
-            optimizer.zero_grad()
-            Y = net(en_input, zh_input)
-            # Y.shape = (batch_size, seq_len, target_vocab_size)
-            
-            loss = loss_fn(Y, zh_target, zh_valid_lens)
-            loss.sum().backward()
-            optimizer.step()
-            
-            run_loss += loss.mean().item()
-
-            if step % 200 == 0:
-                if last_time is not None:
-                    token_num = 200 * batch_size * (zh_seq_len + en_seq_len)
-                    writer.add_scalar(f'tokens / sec [epoch{epoch}]', token_num / (time.time() - last_time), step)
-                last_time = time.time()
+            for zh_input, en_input, zh_target, zh_valid_lens, en_valid_lens in dataset:
+                zh_input = zh_input.to(device)
+                en_input = en_input.to(device)
+                zh_target = zh_target.to(device)
+                zh_valid_lens = zh_valid_lens.to(device)
                 
-                Y_idx = Y.argmax(dim=2)
-                # Y_idx.shape = (batch_size, seq_len)
+                optimizer.zero_grad()
+                Y = net(en_input, zh_input)
+                # Y.shape = (batch_size, seq_len, target_vocab_size)
                 
-                writer.add_scalar(f'loss [epoch{epoch}]', loss.mean().item(), step)
-                writer.add_text(f'encoder_input [epoch{epoch}]', dataset.en_vocab.idx_to_str(en_input[0].tolist()), step)
-                # writer.add_text(f'decoder_input [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_input[0].tolist()), step)
-                writer.add_text(f'target [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_target[0].tolist()), step)
-                writer.add_text(f'predict [epoch{epoch}]', dataset.zh_vocab.idx_to_str(Y_idx[0].tolist()), step)
-                writer.flush()
+                loss = loss_fn(Y, zh_target, zh_valid_lens)
+                loss.sum().backward()
+                optimizer.step()
+                
+                run_loss += loss.mean().item()
 
-            step += 1
-        
-        logger.info(f'Epoch {epoch} finished, loss: {run_loss / step}')
-        
-        torch.save(net.state_dict(), f'runs/{run_name}/epoch{epoch}.pth')
-        logger.info(f'Epoch {epoch} model saved')
-        
-        writer.add_scalar(f'epoch loss', run_loss / step, epoch)
-        writer.add_scalar(f'epoch lr', lr, epoch)
-        writer.flush()
-        
-        lr = lr * 0.7
+                if step % 200 == 0:
+                    if last_time is not None:
+                        token_num = 200 * batch_size * (zh_seq_len + en_seq_len)
+                        writer.add_scalar(f'tokens / sec [epoch{epoch}]', token_num / (time.time() - last_time), step)
+                    last_time = time.time()
+                    
+                    Y_idx = Y.argmax(dim=2)
+                    # Y_idx.shape = (batch_size, seq_len)
+                    
+                    writer.add_scalar(f'loss [epoch{epoch}]', loss.mean().item(), step)
+                    writer.add_text(f'encoder_input [epoch{epoch}]', dataset.en_vocab.idx_to_str(en_input[0].tolist()), step)
+                    # writer.add_text(f'decoder_input [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_input[0].tolist()), step)
+                    writer.add_text(f'target [epoch{epoch}]', dataset.zh_vocab.idx_to_str(zh_target[0].tolist()), step)
+                    writer.add_text(f'predict [epoch{epoch}]', dataset.zh_vocab.idx_to_str(Y_idx[0].tolist()), step)
+                    writer.flush()
+
+                step += 1
+            
+            logger.info(f'Epoch {epoch} finished, loss: {run_loss / step}')
+            
+            torch.save(net.state_dict(), f'runs/{run_name}/epoch{epoch}.pth')
+            logger.info(f'Epoch {epoch} model saved')
+            
+            writer.add_scalar(f'epoch loss', run_loss / step, epoch)
+            writer.add_scalar(f'epoch lr', lr, epoch)
+            writer.flush()
+            
+            lr = lr * 0.7
+    except Exception as e:
+        logger.error(e)
+    except KeyboardInterrupt:
+        logger.info('KeyboardInterrupt')
+    finally:
+        dataset.terminate()
 
 
 if __name__ == '__main__':
