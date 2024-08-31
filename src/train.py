@@ -4,6 +4,7 @@ import torch
 import torch.optim as optim
 import signal
 import os
+import multiprocessing
 from tensorboardX import SummaryWriter
 
 from gru import Seq2SeqGRU
@@ -14,26 +15,19 @@ from init_params import get_params
 from log import init_main_logging, log_queue
 
 
-dataset = None
-
-
 def terminate(signal_number, frame):
     print(f"Main process {os.getpid()} received signal {signal_number}, terminating child processes...")
-
-    global dataset
-    if dataset is not None:
-        dataset.terminate()
-        dataset.join()
-    
+    for p in multiprocessing.active_children():
+        p.terminate()
     print("All child processes terminated.")
     exit(0)
 
 
 def main():
-    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr, dataset
+    global run_name, en_seq_len, zh_seq_len, epochs, batch_size, lr
     
     if torch.cuda.is_available():
-        cuda = "cuda:2"
+        cuda = "cuda:1"
         device = torch.device(cuda)
         print(f'Use device: {cuda}')
     elif torch.backends.mps.is_available():
@@ -79,7 +73,7 @@ def main():
                 
                 run_loss += loss.mean().item()
 
-                if step % 200 == 0:
+                if step % 50 == 0:
                     if last_time is not None:
                         token_num = 200 * batch_size * (zh_seq_len + en_seq_len)
                         writer.add_scalar(f'tokens/s_epoch{epoch}', token_num / (time.time() - last_time), step)
@@ -106,7 +100,7 @@ def main():
             writer.add_scalar(f'epoch lr', lr, epoch)
             writer.flush()
             
-            lr = lr * 0.7
+            lr = lr * 0.9
     except Exception as e:
         logger.error(e)
     except KeyboardInterrupt:
