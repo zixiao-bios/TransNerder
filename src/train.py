@@ -101,6 +101,12 @@ def main():
             writer.flush()
             
             lr = lr * 0.9
+            
+        logger.info('Finished training')
+        
+        logger.info('waiting for dataset to join...')
+        dataset.join()
+        logger.info('main process finished')
     except Exception as e:
         logger.error(e)
     except KeyboardInterrupt:
